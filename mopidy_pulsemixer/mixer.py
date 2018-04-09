@@ -32,33 +32,22 @@ class PulseMixer(pykka.ThreadingActor, mixer.Mixer):
             self.sink_name)
 
     def _sink(self):
-        sinks = self.pulse.sink_list()
-        for sink in sinks:
-            if sink.name == self.sink_name:
-                return sink
-        logger.error(
-                'Could not find Pulseaudio sink %(sink)s. '
-                'Available sinks include: %(sinks)s' % {
-                    'sink': self.sink_name,
-                    'sinks': ', '.join([sink.name for sink in sinks]),
-                })
-        return None
+        sink = self.pulse.get_sink_by_name(self.sink_name)
+        return sink
 
     def on_start(self):
         self._observer = PulseMixerObserver(
             callback=self.trigger_events_for_changed_values)
         self._observer.start()
 
-    def get_volume(self):
-        sink = self._sink()
+    def _get_volume(self, sink):
         if sink is None:
             return None
         channels = sink.volume.values
-        if channels.count(channels[0]) == len(channels):
-            return int(channels[0] * 100.0)
-        else:
-            logger.info('Not all channels have the same volume')
-            return None
+        return int(channels[0] * 100.0)
+
+    def get_volume(self):
+        return self._get_volume(self._sink())
 
     def set_volume(self, volume):
         sink = self._sink()
@@ -67,12 +56,14 @@ class PulseMixer(pykka.ThreadingActor, mixer.Mixer):
         self.pulse.volume_set_all_chans(sink, volume / 100.0)
         return True
 
-    def get_mute(self):
-        sink = self._sink()
+    def _get_mute(self, sink):
         if sink is None:
             return None
         else:
             return bool(sink.mute)
+
+    def get_mute(self):
+        return self._get_mute(self._sink())
 
     def set_mute(self, mute):
         sink = self._sink()
@@ -87,8 +78,8 @@ class PulseMixer(pykka.ThreadingActor, mixer.Mixer):
             return
         if ev.index != sink.index or ev.t != 'change':
             return
-        old_volume, self._last_volume = self._last_volume, self.get_volume()
-        old_mute, self._last_mute = self._last_mute, self.get_mute()
+        old_volume, self._last_volume = self._last_volume, self._get_volume(sink)
+        old_mute, self._last_mute = self._last_mute, self._get_mute(sink)
 
         if old_volume != self._last_volume:
             self.trigger_volume_changed(self._last_volume)
@@ -100,19 +91,17 @@ class PulseMixerObserver(threading.Thread):
     daemon = True
     name = 'PulseMixerObserver'
 
-    def __init__(self, callback=None):
+    def __init__(self, callback):
         super(PulseMixerObserver, self).__init__()
         self.running = True
-
-        # Keep the mixer instance alive for the descriptors to work
-        self.pulse = pulsectl.Pulse('PulseMixerObserver')
         self.callback = callback
 
     def stop(self):
         self.running = False
 
     def run(self):
-        self.pulse.event_mask_set('sink')
-        self.pulse.event_callback_set(self.callback)
-        while self.running:
-            self.pulse.event_listen(timeout=1)
+        with pulsectl.Pulse('PulseMixerObserver') as pulse:
+            pulse.event_mask_set('sink')
+            pulse.event_callback_set(self.callback)
+            while self.running:
+                pulse.event_listen(timeout=1)
