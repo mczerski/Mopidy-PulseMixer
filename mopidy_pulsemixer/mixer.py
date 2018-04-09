@@ -72,11 +72,9 @@ class PulseMixer(pykka.ThreadingActor, mixer.Mixer):
         self.pulse.mute(mute)
         return True
 
-    def trigger_events_for_changed_values(self, ev):
+    def trigger_events_for_changed_values(self):
         sink = self._sink()
         if sink is None:
-            return
-        if ev.index != sink.index or ev.t != 'change':
             return
         old_volume, self._last_volume = self._last_volume, self._get_volume(sink)
         old_mute, self._last_mute = self._last_mute, self._get_mute(sink)
@@ -94,7 +92,12 @@ class PulseMixerObserver(threading.Thread):
     def __init__(self, callback):
         super(PulseMixerObserver, self).__init__()
         self.running = True
-        self.callback = callback
+        self.changed = False
+        self._callback = callback
+
+    def callback(self, ev):
+        self.changed = ev.t == "change"
+        raise pulsectl.PulseLoopStop()
 
     def stop(self):
         self.running = False
@@ -104,4 +107,10 @@ class PulseMixerObserver(threading.Thread):
             pulse.event_mask_set('sink')
             pulse.event_callback_set(self.callback)
             while self.running:
-                pulse.event_listen(timeout=1)
+                try:
+                    pulse.event_listen(timeout=1)
+                except pulsectl.PulseLoopStop:
+                    pass
+                if self.changed:
+                    self.changed = False
+                    self._callback()
