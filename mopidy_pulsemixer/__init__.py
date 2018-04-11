@@ -20,11 +20,7 @@ class Extension(ext.Extension):
 
     def get_config_schema(self):
         schema = super(Extension, self).get_config_schema()
-        schema['sink'] = config.String()
-        schema['min_volume'] = config.Integer(minimum=0, maximum=100)
-        schema['max_volume'] = config.Integer(minimum=0, maximum=100)
-        schema['volume_scale'] = config.String(
-            choices=('linear', 'cubic', 'log'))
+        schema['sink'] = config.String(optional=True)
         return schema
 
     def setup(self, registry):
